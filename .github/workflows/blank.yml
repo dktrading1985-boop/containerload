@@ -5,9 +5,11 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+# expose secrets into environment variables (safe at runtime)
 env:
   REGISTRY: ${{ secrets.REGISTRY }}
   NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
+  DO_DEPLOY: ${{ secrets.DO_DEPLOY }}
 
 jobs:
   build-and-push:
@@ -47,7 +49,8 @@ jobs:
 
   deploy:
     needs: build-and-push
-    if: ${{ secrets.DO_DEPLOY == 'true' }}
+    # use the env variable (populated from the secret above) in the job condition
+    if: ${{ env.DO_DEPLOY == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Install SSH client
