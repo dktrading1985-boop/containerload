@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-# expose secrets into environment variables (safe at runtime)
+# (Optional) top-level env — safe to keep, but not used in job-level ifs
 env:
   REGISTRY: ${{ secrets.REGISTRY }}
   NAMESPACE: ${{ secrets.DOCKERHUB_NAMESPACE }}
@@ -49,10 +49,16 @@ jobs:
 
   deploy:
     needs: build-and-push
-    # use the env variable (populated from the secret above) in the job condition
-    if: ${{ secrets.DO_DEPLOY == 'true' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Check DO_DEPLOY flag
+        run: |
+          # read secret at runtime and skip deploy if not "true"
+          if [ "${{ secrets.DO_DEPLOY }}" != "true" ]; then
+            echo "DO_DEPLOY != true -> skipping deploy"
+            exit 0
+          fi
+
       - name: Install SSH client
         run: sudo apt-get update && sudo apt-get install -y openssh-client
 
