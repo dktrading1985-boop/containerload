@@ -1,0 +1,75 @@
+name: containerload-deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Add your build-and-push steps here if needed
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH directory
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+      - name: Decode and add SSH key (base64)
+        env:
+          KEY_B64: ${{ secrets.DO_SSH_PRIVATE_KEY_B64 }}
+        run: |
+          set -e
+          if [ -z "${KEY_B64:-}" ]; then
+            echo "ERROR: DO_SSH_PRIVATE_KEY_B64 is empty"
+            exit 1
+          fi
+          # decode base64 to file
+          if echo "$KEY_B64" | base64 -d > ~/.ssh/id_rsa 2>/dev/null; then
+            true
+          else
+            echo "$KEY_B64" | base64 --decode > ~/.ssh/id_rsa
+          fi
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keygen -lf ~/.ssh/id_rsa
+
+      - name: Add droplet to known_hosts
+        env:
+          HOST: ${{ secrets.DO_HOST }}
+        run: |
+          set -e
+          if [ -z "${HOST:-}" ]; then
+            echo "ERROR: DO_HOST is not set"
+            exit 1
+          fi
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        env:
+          HOST: ${{ secrets.DO_HOST }}
+          USER: ${{ secrets.DO_USER }}
+        run: |
+          set -e
+          if [ -z "${USER:-}" ]; then
+            echo "ERROR: DO_USER is not set"
+            exit 1
+          fi
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa "$USER@$HOST" "echo connected && whoami && uname -a"
+
+      - name: Deploy on Droplet
+        env:
+          HOST: ${{ secrets.DO_HOST }}
+          USER: ${{ secrets.DO_USER }}
+        run: |
+          set -e
+          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa "$USER@$HOST" "cd /home/deploy/containerload && docker compose -f docker-compose.yml -f docker-compose.frontend.yml up -d"
