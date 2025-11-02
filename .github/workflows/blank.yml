@@ -50,7 +50,7 @@ jobs:
   deploy:
     needs: build-and-push
     # use the env variable (populated from the secret above) in the job condition
-    if: ${{ env.DO_DEPLOY == 'true' }}
+    if: ${{ secrets.DO_DEPLOY == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Install SSH client
