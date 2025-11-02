@@ -1,0 +1,29 @@
+# Stage: builder
+FROM node:18-bullseye AS builder
+WORKDIR /usr/src/app
+
+# Install build deps
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# Copy source and build
+COPY . .
+RUN npm run build
+
+# Stage: runtime
+FROM node:18-bullseye-slim
+WORKDIR /usr/src/app
+
+# Install runtime deps (production only)
+COPY --from=builder /usr/src/app/package.json ./package.json
+COPY --from=builder /usr/src/app/node_modules ./node_modules
+COPY --from=builder /usr/src/app/dist ./dist
+COPY --from=builder /usr/src/app/prisma ./prisma
+# Copy entrypoint from builder root (builder already has backend/entrypoint.sh under /usr/src/app/entrypoint.sh)
+# Ensure entrypoint path matches how entrypoint.sh is placed in builder context
+COPY --from=builder /usr/src/app/entrypoint.sh ./entrypoint.sh
+
+RUN chmod +x ./entrypoint.sh
+
+EXPOSE 4000
+CMD ["node", "dist/server.js"]

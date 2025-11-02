@@ -1,0 +1,54 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native","debian-openssl-1.1.x","debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String?
+  lastName     String?
+  role         String   @default("user")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt @default(now())
+}
+model Container {
+  id             String   @id @default(uuid())
+  name           String
+  length         Float
+  width          Float
+  height         Float
+  maxWeight      Float
+  loads          Load[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Load {
+  id             String   @id @default(uuid())
+  containerId    String
+  container      Container @relation(fields: [containerId], references: [id])
+  pallets        Pallet[]
+  totalWeight    Float
+  utilizedVolume Float
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Pallet {
+  id          String   @id @default(uuid())
+  loadId      String
+  load        Load @relation(fields: [loadId], references: [id])
+  length      Float
+  width       Float
+  height      Float
+  weight      Float
+  quantity    Int
+}
+
