@@ -1,3 +1,42 @@
+name: containerload-deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Optional: build/push steps (uncomment and fill if you use registry secrets)
+      # - name: Log in to registry
+      #   uses: docker/login-action@v2
+      #   with:
+      #     registry: ${{ secrets.REGISTRY }}
+      #     username: ${{ secrets.REGISTRY_USERNAME }}
+      #     password: ${{ secrets.REGISTRY_PASSWORD }}
+      #
+      # - name: Build and push images
+      #   run: |
+      #     docker build -t ${{ secrets.REGISTRY }}/containerload-frontend:latest ./frontend
+      #     docker push ${{ secrets.REGISTRY }}/containerload-frontend:latest
+      #     docker build -t ${{ secrets.REGISTRY }}/containerload-backend:latest ./backend
+      #     docker push ${{ secrets.REGISTRY }}/containerload-backend:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH directory
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
       - name: Install SSH key (raw or base64) — robust
         env:
           KEY_RAW: ${{ secrets.DO_SSH_PRIVATE_KEY_RAW }}
@@ -11,7 +50,7 @@
           if [ -n "${KEY_RAW:-}" ]; then
             echo "Using DO_SSH_PRIVATE_KEY_RAW (raw private key text). Writing to ~/.ssh/id_rsa"
             # Write raw content preserving newlines
-            printf '%s' "$KEY_RAW" > ~/.ssh/id_rsa
+            printf '%s\n' "$KEY_RAW" > ~/.ssh/id_rsa
           else
             echo "DO_SSH_PRIVATE_KEY_RAW not found — falling back to DO_SSH_PRIVATE_KEY_B64 (base64)."
             if [ -z "${KEY_B64:-}" ]; then
@@ -54,3 +93,49 @@
             echo "ssh-keygen failed to parse the key (libcrypto). The key file may be corrupted or in an unsupported format."
             exit 1
           fi
+
+      - name: Add droplet to known_hosts
+        env:
+          HOST: ${{ secrets.DO_HOST }}
+        run: |
+          set -e
+          if [ -z "${HOST:-}" ]; then
+            echo "ERROR: DO_HOST not set"
+            exit 1
+          fi
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Test SSH connectivity
+        env:
+          HOST: ${{ secrets.DO_HOST }}
+          USER: ${{ secrets.DO_USER }}
+        run: |
+          set -e
+          if [ -z "${HOST:-}" ]; then
+            echo "ERROR: DO_HOST not set"
+            exit 1
+          fi
+          if [ -z "${USER:-}" ]; then
+            echo "ERROR: DO_USER not set"
+            exit 1
+          fi
+          echo "Testing SSH to $USER@$HOST ..."
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa "$USER@$HOST" "echo connected && whoami && uname -a"
+
+      - name: Deploy on Droplet
+        env:
+          HOST: ${{ secrets.DO_HOST }}
+          USER: ${{ secrets.DO_USER }}
+        run: |
+          set -e
+          if [ -z "${HOST:-}" ]; then
+            echo "ERROR: DO_HOST not set"
+            exit 1
+          fi
+          if [ -z "${USER:-}" ]; then
+            echo "ERROR: DO_USER not set"
+            exit 1
+          fi
+          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa "$USER@$HOST" \
+            "cd /home/deploy/containerload && docker compose -f docker-compose.yml -f docker-compose.frontend.yml up -d"
