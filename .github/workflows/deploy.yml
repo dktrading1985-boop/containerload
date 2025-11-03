@@ -1,151 +1,53 @@
-name: containerload-deploy
+   - name: Decode and add SSH key (base64) — robust diagnostics
+     env:
+       KEY_B64: ${{ secrets.DO_SSH_PRIVATE_KEY_B64 }}
+     run: |
+       set -euo pipefail
+       mkdir -p ~/.ssh
+       chmod 700 ~/.ssh
 
-on:
-  workflow_dispatch:
+       if [ -z "${KEY_B64:-}" ]; then
+         echo "ERROR: DO_SSH_PRIVATE_KEY_B64 is empty"
+         exit 1
+       fi
 
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+       echo "Secret length (chars): ${#KEY_B64}"
 
-      # Optional: build, tag, and push steps
-      # Uncomment and adapt if you want the workflow to build and push Docker images.
-      # - name: Log in to registry
-      #   uses: docker/login-action@v2
-      #   with:
-      #     registry: ${{ secrets.REGISTRY }}
-      #     username: ${{ secrets.REGISTRY_USERNAME }}
-      #     password: ${{ secrets.REGISTRY_PASSWORD }}
-      #
-      # - name: Build and push images
-      #   run: |
-      #     # Example: build frontend and backend images and push
-      #     docker build -t ${{ secrets.REGISTRY }}/containerload-frontend:latest ./frontend
-      #     docker push ${{ secrets.REGISTRY }}/containerload-frontend:latest
-      #     docker build -t ${{ secrets.REGISTRY }}/containerload-backend:latest ./backend
-      #     docker push ${{ secrets.REGISTRY }}/containerload-backend:latest
+       # Try decoding; strip CRs if necessary
+       DECODED=~/.ssh/id_rsa.raw
+       if echo "$KEY_B64" | base64 -d > "$DECODED" 2>/dev/null; then
+         echo "Decoded with base64 -d"
+       elif echo "$KEY_B64" | base64 --decode > "$DECODED" 2>/dev/null; then
+         echo "Decoded with base64 --decode"
+       else
+         echo "First decode failed; attempting to strip CR and retry."
+         if echo "$KEY_B64" | tr -d '\r' | base64 -d > "$DECODED" 2>/dev/null; then
+           echo "Decoded after stripping CR with base64 -d"
+         elif echo "$KEY_B64" | tr -d '\r' | base64 --decode > "$DECODED" 2>/dev/null; then
+           echo "Decoded after stripping CR with base64 --decode"
+         else
+           echo "ERROR: base64 decode failed. Check DO_SSH_PRIVATE_KEY_B64 content."
+           exit 1
+         fi
+       fi
 
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+       # Move decoded bytes to final key path and set perms
+       CLEAN=~/.ssh/id_rsa
+       mv "$DECODED" "$CLEAN"
+       chmod 600 "$CLEAN"
 
-      - name: Prepare SSH directory
-        run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
+       echo "==== Diagnostics: file, head (safe), hexdump ===="
+       file "$CLEAN" || true
+       echo "---- head (first line, non-printables removed) ----"
+       head -c 120 "$CLEAN" | tr -c '[:print:]\n' '.' | sed -n '1,3p' || true
+       echo "---- hexdump first 64 bytes ----"
+       head -c 64 "$CLEAN" | xxd -g 1 -l 64 || true
+       echo "---- end diagnostics ----"
 
-      - name: Decode and add SSH key (base64) — diagnostics
-        env:
-          KEY_B64: ${{ secrets.DO_SSH_PRIVATE_KEY_B64 }}
-        run: |
-          set -euo pipefail
-
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-
-          if [ -z "${KEY_B64:-}" ]; then
-            echo "ERROR: DO_SSH_PRIVATE_KEY_B64 is empty"
-            exit 1
-          fi
-
-          echo "Secret length (chars): ${#KEY_B64}"
-
-          # Try decode: try base64 -d then base64 --decode (portable)
-          DECODED_FILE=~/.ssh/id_rsa.raw
-          if echo "$KEY_B64" | base64 -d > "$DECODED_FILE" 2>/dev/null; then
-            echo "Decoded with base64 -d"
-          elif echo "$KEY_B64" | base64 --decode > "$DECODED_FILE" 2>/dev/null; then
-            echo "Decoded with base64 --decode"
-          else
-            echo "First decode failed. Attempting to strip CR and retry."
-            # try removing CR characters before decoding
-            echo "$KEY_B64" | tr -d '\r' | base64 -d > "$DECODED_FILE" 2>/dev/null || \
-            echo "$KEY_B64" | tr -d '\r' | base64 --decode > "$DECODED_FILE" 2>/dev/null || {
-              echo "ERROR: base64 decode failed. Check DO_SSH_PRIVATE_KEY_B64 content."
-              exit 1
-            }
-          fi
-
-          # Make a cleaned version that removes stray CR bytes, ensures LF endings
-          CLEAN_FILE=~/.ssh/id_rsa
-          awk '{ sub(/\r$/, ""); print }' "$DECODED_FILE" > "$CLEAN_FILE" || cp "$DECODED_FILE" "$CLEAN_FILE"
-          chmod 600 "$CLEAN_FILE"
-
-          echo "==== Diagnostics: file, head, hexdump ===="
-          file "$CLEAN_FILE" || true
-          echo "---- first 3 lines ----"
-          head -n 3 "$CLEAN_FILE" | sed -n '1,3p' || true
-          echo "---- hexdump first 64 bytes ----"
-          head -c 64 "$CLEAN_FILE" | xxd -g 1 -l 64 || true
-          echo "---- end diagnostics ----"
-
-          FIRST_LINE="$(head -n1 "$CLEAN_FILE" || true)"
-          echo "First line of decoded key: $FIRST_LINE"
-
-          # Accept either OpenSSH new format or older PEM; but prefer OpenSSH header for ed25519
-          if [[ "$FIRST_LINE" != "-----BEGIN OPENSSH PRIVATE KEY-----" ]] && \
-             [[ "$FIRST_LINE" != "-----BEGIN RSA PRIVATE KEY-----" ]] && \
-             [[ "$FIRST_LINE" != "-----BEGIN PRIVATE KEY-----" ]]; then
-            echo "ERROR: Decoded key header is unexpected. Check the secret contains the private key."
-            exit 1
-          fi
-
-          # Print fingerprint if possible
-          if ssh-keygen -lf "$CLEAN_FILE" 2>/dev/null; then
-            echo "ssh-keygen fingerprint displayed above."
-          else
-            echo "ssh-keygen failed to parse the key (libcrypto)."
-            echo "If libcrypto fails, the file is corrupted or format not supported."
-            exit 1
-          fi
-
-      - name: Add droplet to known_hosts
-        env:
-          HOST: ${{ secrets.DO_HOST }}
-        run: |
-          set -e
-          if [ -z "${HOST:-}" ]; then
-            echo "ERROR: DO_HOST not set"
-            exit 1
-          fi
-          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
-          chmod 644 ~/.ssh/known_hosts
-
-      - name: Test SSH connectivity
-        env:
-          HOST: ${{ secrets.DO_HOST }}
-          USER: ${{ secrets.DO_USER }}
-        run: |
-          set -e
-          if [ -z "${HOST:-}" ]; then
-            echo "ERROR: DO_HOST not set"
-            exit 1
-          fi
-          if [ -z "${USER:-}" ]; then
-            echo "ERROR: DO_USER not set"
-            exit 1
-          fi
-          echo "Testing SSH to $USER@$HOST ..."
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa "$USER@$HOST" "echo connected && whoami && uname -a"
-
-      - name: Deploy on Droplet
-        env:
-          HOST: ${{ secrets.DO_HOST }}
-          USER: ${{ secrets.DO_USER }}
-        run: |
-          set -e
-          if [ -z "${HOST:-}" ]; then
-            echo "ERROR: DO_HOST not set"
-            exit 1
-          fi
-          if [ -z "${USER:-}" ]; then
-            echo "ERROR: DO_USER not set"
-            exit 1
-          fi
-          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa "$USER@$HOST" \
-            "cd /home/deploy/containerload && docker compose -f docker-compose.yml -f docker-compose.frontend.yml up -d"
+       # Validate key with ssh-keygen (accepts all supported private key formats)
+       if ssh-keygen -lf "$CLEAN" 2>/dev/null; then
+         echo "ssh-keygen fingerprint displayed above. Key is valid."
+       else
+         echo "ssh-keygen failed to parse the key (libcrypto). The key file may be corrupted or in an unsupported format."
+         exit 1
+       fi
