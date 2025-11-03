@@ -10,7 +10,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Add your build-and-push steps here if needed
+      # Optional: build, tag, and push steps
+      # Uncomment and adapt if you want the workflow to build and push Docker images.
+      # - name: Log in to registry
+      #   uses: docker/login-action@v2
+      #   with:
+      #     registry: ${{ secrets.REGISTRY }}
+      #     username: ${{ secrets.REGISTRY_USERNAME }}
+      #     password: ${{ secrets.REGISTRY_PASSWORD }}
+      #
+      # - name: Build and push images
+      #   run: |
+      #     # Example: build frontend and backend images and push
+      #     docker build -t ${{ secrets.REGISTRY }}/containerload-frontend:latest ./frontend
+      #     docker push ${{ secrets.REGISTRY }}/containerload-frontend:latest
+      #     docker build -t ${{ secrets.REGISTRY }}/containerload-backend:latest ./backend
+      #     docker push ${{ secrets.REGISTRY }}/containerload-backend:latest
 
   deploy:
     needs: build-and-push
@@ -24,23 +39,70 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-      - name: Decode and add SSH key (base64)
+      - name: Decode and add SSH key (base64) — diagnostics
         env:
           KEY_B64: ${{ secrets.DO_SSH_PRIVATE_KEY_B64 }}
         run: |
-          set -e
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
           if [ -z "${KEY_B64:-}" ]; then
             echo "ERROR: DO_SSH_PRIVATE_KEY_B64 is empty"
             exit 1
           fi
-          # decode base64 to file
-          if echo "$KEY_B64" | base64 -d > ~/.ssh/id_rsa 2>/dev/null; then
-            true
+
+          echo "Secret length (chars): ${#KEY_B64}"
+
+          # Try decode: try base64 -d then base64 --decode (portable)
+          DECODED_FILE=~/.ssh/id_rsa.raw
+          if echo "$KEY_B64" | base64 -d > "$DECODED_FILE" 2>/dev/null; then
+            echo "Decoded with base64 -d"
+          elif echo "$KEY_B64" | base64 --decode > "$DECODED_FILE" 2>/dev/null; then
+            echo "Decoded with base64 --decode"
           else
-            echo "$KEY_B64" | base64 --decode > ~/.ssh/id_rsa
+            echo "First decode failed. Attempting to strip CR and retry."
+            # try removing CR characters before decoding
+            echo "$KEY_B64" | tr -d '\r' | base64 -d > "$DECODED_FILE" 2>/dev/null || \
+            echo "$KEY_B64" | tr -d '\r' | base64 --decode > "$DECODED_FILE" 2>/dev/null || {
+              echo "ERROR: base64 decode failed. Check DO_SSH_PRIVATE_KEY_B64 content."
+              exit 1
+            }
           fi
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keygen -lf ~/.ssh/id_rsa
+
+          # Make a cleaned version that removes stray CR bytes, ensures LF endings
+          CLEAN_FILE=~/.ssh/id_rsa
+          awk '{ sub(/\r$/, ""); print }' "$DECODED_FILE" > "$CLEAN_FILE" || cp "$DECODED_FILE" "$CLEAN_FILE"
+          chmod 600 "$CLEAN_FILE"
+
+          echo "==== Diagnostics: file, head, hexdump ===="
+          file "$CLEAN_FILE" || true
+          echo "---- first 3 lines ----"
+          head -n 3 "$CLEAN_FILE" | sed -n '1,3p' || true
+          echo "---- hexdump first 64 bytes ----"
+          head -c 64 "$CLEAN_FILE" | xxd -g 1 -l 64 || true
+          echo "---- end diagnostics ----"
+
+          FIRST_LINE="$(head -n1 "$CLEAN_FILE" || true)"
+          echo "First line of decoded key: $FIRST_LINE"
+
+          # Accept either OpenSSH new format or older PEM; but prefer OpenSSH header for ed25519
+          if [[ "$FIRST_LINE" != "-----BEGIN OPENSSH PRIVATE KEY-----" ]] && \
+             [[ "$FIRST_LINE" != "-----BEGIN RSA PRIVATE KEY-----" ]] && \
+             [[ "$FIRST_LINE" != "-----BEGIN PRIVATE KEY-----" ]]; then
+            echo "ERROR: Decoded key header is unexpected. Check the secret contains the private key."
+            exit 1
+          fi
+
+          # Print fingerprint if possible
+          if ssh-keygen -lf "$CLEAN_FILE" 2>/dev/null; then
+            echo "ssh-keygen fingerprint displayed above."
+          else
+            echo "ssh-keygen failed to parse the key (libcrypto)."
+            echo "If libcrypto fails, the file is corrupted or format not supported."
+            exit 1
+          fi
 
       - name: Add droplet to known_hosts
         env:
@@ -48,22 +110,27 @@ jobs:
         run: |
           set -e
           if [ -z "${HOST:-}" ]; then
-            echo "ERROR: DO_HOST is not set"
+            echo "ERROR: DO_HOST not set"
             exit 1
           fi
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Test SSH connection
+      - name: Test SSH connectivity
         env:
           HOST: ${{ secrets.DO_HOST }}
           USER: ${{ secrets.DO_USER }}
         run: |
           set -e
-          if [ -z "${USER:-}" ]; then
-            echo "ERROR: DO_USER is not set"
+          if [ -z "${HOST:-}" ]; then
+            echo "ERROR: DO_HOST not set"
             exit 1
           fi
+          if [ -z "${USER:-}" ]; then
+            echo "ERROR: DO_USER not set"
+            exit 1
+          fi
+          echo "Testing SSH to $USER@$HOST ..."
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa "$USER@$HOST" "echo connected && whoami && uname -a"
 
       - name: Deploy on Droplet
@@ -72,4 +139,13 @@ jobs:
           USER: ${{ secrets.DO_USER }}
         run: |
           set -e
-          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa "$USER@$HOST" "cd /home/deploy/containerload && docker compose -f docker-compose.yml -f docker-compose.frontend.yml up -d"
+          if [ -z "${HOST:-}" ]; then
+            echo "ERROR: DO_HOST not set"
+            exit 1
+          fi
+          if [ -z "${USER:-}" ]; then
+            echo "ERROR: DO_USER not set"
+            exit 1
+          fi
+          ssh -o StrictHostKeyChecking=yes -i ~/.ssh/id_rsa "$USER@$HOST" \
+            "cd /home/deploy/containerload && docker compose -f docker-compose.yml -f docker-compose.frontend.yml up -d"
