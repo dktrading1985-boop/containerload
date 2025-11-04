@@ -1,23 +1,20 @@
 import { Router } from 'express';
-import { jwtMiddleware, AuthRequest } from '../middleware/auth';
 import { PrismaClient } from '@prisma/client';
+import { requireAuth, AuthRequest } from '../middleware/auth';
 
 const prisma = new PrismaClient();
 const router = Router();
 
-router.get('/profile', jwtMiddleware, async (req: AuthRequest, res) => {
-  if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
-  try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-      select: { id: true, email: true, role: true, createdAt: true, firstName: true, lastName: true },
-    });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    return res.json(user);
-  } catch (err) {
-    console.error('profile error', err);
-    return res.status(500).json({ error: 'Server error' });
-  }
+router.get('/profile', requireAuth, async (req: AuthRequest, res) => {
+  const userId = req.userId;
+  if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId }, // Prisma expects string id
+    select: { id: true, email: true, role: true, createdAt: true }
+  });
+
+  return res.json({ user });
 });
 
 export default router;
