@@ -19,3 +19,7 @@ dist/
 # Backups
 *.bak
 *.broken*
+backend/prisma/dev.db
+backend/prisma/dev.db-journal
+.github/workflows/*.bak-*
+backend/prisma/migrations_backup_*/
