@@ -1,0 +1,20 @@
+import healthRouter from "./routes/health";
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+
+const app = express();
+app.use(cors());
+  app.use("/", healthRouter);
+app.use(helmet());
+  app.use("/", healthRouter);
+app.use(express.json());
+  app.use("/", healthRouter);
+
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({ ok: true, version: '1.0.0' });
+});
+
+  app.use("/", healthRouter);
+  app.use("/", healthRouter);
+export default app;
