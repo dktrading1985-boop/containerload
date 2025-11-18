@@ -1,0 +1,2 @@
+version: '3.8'
+# override file (kept minimal). You can extend frontend options here later.

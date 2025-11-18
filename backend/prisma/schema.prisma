@@ -1,54 +1,39 @@
 generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native","debian-openssl-1.1.x","debian-openssl-3.0.x"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
-  firstName    String?
-  lastName     String?
-  role         String   @default("user")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt @default(now())
-}
-model Container {
-  id             String   @id @default(uuid())
-  name           String
-  length         Float
-  width          Float
-  height         Float
-  maxWeight      Float
-  loads          Load[]
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id           String        @id @default(uuid())
+  email        String        @unique
+  password     String
+  role         String        @default("user")
+  createdAt    DateTime      @default(now())
+  calculations Calculation[]
+  refreshTokens RefreshToken[]
 }
 
-model Load {
-  id             String   @id @default(uuid())
-  containerId    String
-  container      Container @relation(fields: [containerId], references: [id])
-  pallets        Pallet[]
-  totalWeight    Float
-  utilizedVolume Float
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  revoked   Boolean  @default(false)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
 }
 
-model Pallet {
-  id          String   @id @default(uuid())
-  loadId      String
-  load        Load @relation(fields: [loadId], references: [id])
-  length      Float
-  width       Float
-  height      Float
-  weight      Float
-  quantity    Int
+model Calculation {
+  id            String   @id @default(uuid())
+  createdAt     DateTime @default(now())
+  containerType String
+  itemName      String
+  itemDims      String
+  quantity      Int
+  utilization   Float
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id])
 }
-

@@ -1,26 +1,19 @@
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
 
 const router = Router();
-const prisma = new PrismaClient();
 
-// Get all containers
-router.get('/', async (req, res) => {
-  const containers = await prisma.container.findMany();
-  res.json(containers);
+/**
+ * Stub routes for containers.
+ * Replace with full implementations once Prisma schema/models are confirmed.
+ */
+
+router.get('/', async (_req, res) => {
+  // Return empty list until real model is implemented
+  return res.json({ containers: [] });
 });
 
-// Create a container
-router.post('/', async (req, res) => {
-  const { name, length, width, height, maxWeight } = req.body;
-  try {
-    const container = await prisma.container.create({
-      data: { name, length, width, height, maxWeight },
-    });
-    res.json(container);
-  } catch (error) {
-    res.status(400).json({ message: 'Error creating container', error });
-  }
+router.post('/', async (_req, res) => {
+  return res.status(501).json({ error: 'Not implemented - container creation' });
 });
 
 export default router;
