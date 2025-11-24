@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  password     String
+  role         String        @default("user")
+  createdAt    DateTime      @default(now())
+  calculations Calculation[]
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  revoked   Boolean  @default(false)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Calculation {
+  id            String   @id @default(uuid())
+  createdAt     DateTime @default(now())
+  containerType String
+  itemName      String
+  itemDims      String
+  quantity      Int
+  utilization   Float
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id])
+}

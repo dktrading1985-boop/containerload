@@ -4,8 +4,8 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 
-const registerSchema = z.object({ email: z.string().email(), password: z.string().min(6) });
-const loginSchema = registerSchema;
+const registerSchema = z.object({ email: z.string().email(), password: z.string().min(6), name: z.string().optional() });
+const loginSchema = z.object({ email: z.string().email(), password: z.string().min(6) });
 const refreshSchema = z.object({ token: z.string() });
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_jwt_secret_change_me";
@@ -20,11 +20,14 @@ function signRefreshToken(userId: string) {
 
 export const register = async (req: Request, res: Response) => {
   try {
-    const { email, password } = registerSchema.parse(req.body);
+    const { email, password, name } = registerSchema.parse(req.body);
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) return res.status(400).json({ error: "Email already in use" });
+
     const hashed = await bcrypt.hash(password, 10);
-    const user = await prisma.user.create({ data: { email, password: hashed } });
+    // NOTE: Prisma User model uses `passwordHash`
+    const user = await prisma.user.create({ data: { email, passwordHash: hashed, name } });
+
     return res.status(201).json({ message: "User registered", user: { id: user.id, email: user.email } });
   } catch (err: any) {
     return res.status(400).json({ error: err?.message ?? "Invalid request" });
@@ -36,12 +39,15 @@ export const login = async (req: Request, res: Response) => {
     const { email, password } = loginSchema.parse(req.body);
     const user = await prisma.user.findUnique({ where: { email }});
     if (!user) return res.status(401).json({ error: "Invalid credentials" });
-    const ok = await bcrypt.compare(password, user.password);
+
+    // use passwordHash field from Prisma
+    const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
     const accessToken = signAccessToken(user.id);
     const refreshToken = signRefreshToken(user.id);
 
+    // ensure refreshToken model exists in prisma schema (refreshToken table)
     await prisma.refreshToken.create({ data: { token: refreshToken, userId: user.id } });
 
     return res.json({ accessToken, refreshToken });
